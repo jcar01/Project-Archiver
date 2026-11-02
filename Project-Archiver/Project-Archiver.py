@@ -6,6 +6,8 @@
 #  This file is a component of Project-Archiver.                                  ~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+import json
+import os
 import traceback
 
 import adsk.core
@@ -15,6 +17,15 @@ from.startup import setup_app, cleanup_app, get_app_path, apper_available
 setup_app(__file__)
 
 my_addin = None
+
+
+def read_version(app_path):
+    """Version from the add-in manifest, shown in the command tooltip."""
+    try:
+        with open(os.path.join(app_path, 'Project-Archiver.manifest'), encoding='utf-8') as handle:
+            return json.load(handle).get('version', '')
+    except Exception:
+        return ''
 
 try:
     if not apper_available(__file__):
@@ -34,12 +45,14 @@ try:
 
     my_addin = apper.FusionApp(config.app_name, config.company_name, False)
     my_addin.root_path = get_app_path(__file__)
+    app_version = read_version(get_app_path(__file__))
 
     my_addin.add_command(
         'Export Active Project',
         ExportCommand,
         {
-            'cmd_description': 'Exports all Fusion Documents in the currently active project',
+            'cmd_description': 'Exports all Fusion Documents in the currently active project (v{})'.format(
+                app_version),
             'cmd_id': 'export_cmd_1',
             'workspace': 'FusionSolidEnvironment',
             'toolbar_panel_id': 'Archive',
