@@ -114,12 +114,27 @@ def export_folder(root_folder, output_folder, file_types, write_version, name_op
                 # Electronics docs are not design products, so the root_comp
                 # based name options in get_name would fail. Use the document
                 # name directly (optionally stripped of its version suffix).
-                output_name = get_electronics_name(write_version)
+                output_name = get_document_name(write_version)
                 export_electronics_doc(output_folder, file_types, output_name)
             except Exception as e:
                 ELECTRONICS_ERRORS.append("{}: {}".format(file.name, str(e)))
             finally:
                 close_active_doc()
+
+        elif file.fileExtension == "f2d" and is_type_selected(file_types, 'DXF'):
+            # Fusion drawings (f2d) export through the drawing product's own
+            # ExportManager. get_drawing_export_manager() returns None on builds
+            # without the drawing API, which is reported for this file only.
+            if not open_doc(file):
+                continue
+            written_files = []
+            try:
+                output_name = get_document_name(write_version)
+                written_files = export_drawing_doc(output_folder, output_name)
+            except Exception as e:
+                EXPORT_ERRORS.append("{}: {}".format(file.name, str(e)))
+            finally:
+                close_active_doc(wait_for_files=written_files)
 
 
 def open_doc(data_file):
@@ -227,7 +242,124 @@ def export_active_doc(folder, file_types, output_name):
                     lambda name: export_mgr.createSTLExportOptions(ao.design.rootComponent, name),
                     written_files)
 
+    if is_type_selected(file_types, 'DXF'):
+        written_files.extend(export_sketch_dxfs(export_mgr, folder, output_name, ao.design))
+
     return written_files
+
+
+def _collect_sketch_targets(component, prefix=''):
+    """Yield (sketch, name prefix) for a component and its local sub-components.
+
+    Referenced (linked) occurrences are skipped: their sketches belong to a
+    different document, which is archived separately when that file is reached.
+    """
+    for sketch in component.sketches:
+        yield sketch, prefix
+
+    for occurrence in component.occurrences:
+        try:
+            if occurrence.isReferencedComponent:
+                continue
+        except Exception:
+            pass
+        child_prefix = prefix + sanitize_filename(occurrence.name) + '_'
+        for target in _collect_sketch_targets(occurrence.component, child_prefix):
+            yield target
+
+
+def _export_sketch_dxf(export_mgr, sketch, file_path):
+    """Export one sketch to DXF and return True on success.
+
+    createDXFSketchExportOptions is the current API but still marked preview, so
+    fall back to the retired Sketch.saveAsDXF when it is unavailable or fails.
+    """
+    create_options = getattr(export_mgr, 'createDXFSketchExportOptions', None)
+    if create_options is not None:
+        try:
+            export_options = create_options(file_path, sketch)
+            if export_options is not None and export_mgr.execute(export_options):
+                return True
+        except Exception:
+            pass
+
+    save_as_dxf = getattr(sketch, 'saveAsDXF', None)
+    if save_as_dxf is None:
+        return False
+    return bool(save_as_dxf(file_path))
+
+
+def export_sketch_dxfs(export_mgr, folder, output_name, design):
+    """Export every sketch in the active design to a DXF file.
+
+    A design with a single sketch is written as <output_name>.dxf. With more
+    than one, each file gets the sketch name (and, for sketches inside a local
+    component, the component name) so nothing is overwritten.
+    """
+    written_files = []
+
+    try:
+        targets = list(_collect_sketch_targets(design.rootComponent))
+    except Exception as e:
+        EXPORT_ERRORS.append("{} (DXF): {}".format(output_name, str(e)))
+        return written_files
+
+    multiple = len(targets) > 1
+
+    for sketch, prefix in targets:
+        if multiple:
+            name = "{}_{}{}".format(output_name, prefix, sanitize_filename(sketch.name))
+        else:
+            name = output_name
+
+        export_name = dup_check(folder + name + '.dxf')
+        try:
+            if not _export_sketch_dxf(export_mgr, sketch, export_name):
+                raise RuntimeError('DXF export failed')
+            written_files.append(export_name)
+        except Exception as e:
+            EXPORT_ERRORS.append("{} (DXF): {}".format(os.path.basename(export_name), str(e)))
+
+    return written_files
+
+
+def get_drawing_export_manager(app):
+    """Return the ExportManager of a drawing document, or None.
+
+    A design document's products expose the fusion ExportManager, which has no
+    createDXFExportOptions. A drawing document exposes a DrawingExportManager
+    that does, so detecting that keeps older builds working.
+    """
+    document = app.activeDocument
+    if document is None:
+        return None
+
+    try:
+        products = document.products
+        for i in range(products.count):
+            manager = getattr(products.item(i), 'exportManager', None)
+            if manager is not None and hasattr(manager, 'createDXFExportOptions'):
+                return manager
+    except Exception:
+        pass
+
+    return None
+
+
+def export_drawing_doc(folder, output_name):
+    """Export the active drawing's sheet to DXF and return the file written."""
+    manager = get_drawing_export_manager(adsk.core.Application.get())
+    if manager is None:
+        raise RuntimeError('DXF export of drawings is not available in this Fusion version')
+
+    export_name = dup_check(folder + output_name + '.dxf')
+    export_options = manager.createDXFExportOptions(export_name)
+    if export_options is None:
+        raise RuntimeError('DXF export options could not be created')
+    if not manager.execute(export_options):
+        raise RuntimeError('DXF export failed')
+
+    return [export_name]
 
 
 def close_active_doc(wait_for_files=None, timeout=10.0):
@@ -411,13 +543,13 @@ def dup_check(name):
     return dup_check(base + '-dup' + ext)
 
 
-def get_electronics_name(write_version):
-    """Derive an output name for an electronics document.
+def get_document_name(write_version):
+    """Derive an output name for a document that is not a design product.
 
-    Electronics documents are not design products, so the Description / Part
-    Number options (which read root_comp) do not apply. We always use the
-    document name, optionally stripping the trailing version suffix to match
-    the behavior of the 'Document Name' option.
+    Electronics documents and drawings are not design products, so the
+    Description / Part Number options (which read root_comp) do not apply. Use
+    the document name, optionally stripping the trailing version suffix to
+    match the behavior of the 'Document Name' option.
     """
     app = adsk.core.Application.get()
     doc_name = app.activeDocument.name
@@ -562,7 +694,7 @@ class ExportCommand(apper.Fusion360CommandBase):
 
         errors = []
         if EXPORT_ERRORS:
-            errors.append('Designs:')
+            errors.append('Documents:')
             errors.extend(EXPORT_ERRORS)
         if ELECTRONICS_ERRORS:
             errors.append('Electronics documents:')
@@ -585,6 +717,7 @@ class ExportCommand(apper.Fusion360CommandBase):
         drop_input_list.add('SMT', False)
         drop_input_list.add('F3D', False)
         drop_input_list.add('STL', False)
+        drop_input_list.add('DXF', False)
         drop_input_list.add('BRD', False)
         drop_input_list.add('SCH', False)
         drop_input_list.add('LBR', False)

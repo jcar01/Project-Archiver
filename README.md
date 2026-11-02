@@ -59,6 +59,20 @@ Under **Export Types** select the different files types you want to export.  You
 
 Electronics documents (prj/sch/brd/lbr) can also be archived. Select the **BRD**, **SCH**, or **LBR** export types to output the corresponding EAGLE files.
 
+#### 2D sketches and drawings (DXF)
+
+Select **DXF** to archive 2D geometry to `.dxf` files:
+
+* For a design (`f3d`), every sketch in the root component and in its local sub-components is exported to
+  its own `.dxf`. A design with a single sketch is written as `<name>.dxf`; with several, each file is named
+  `<name>_<sketch>.dxf` (and `<name>_<component>_<sketch>.dxf` inside a local component) so nothing is
+  overwritten. Sketches inside linked components are skipped, because they belong to a document that is
+  archived on its own.
+* For a Fusion drawing (`f2d`), the drawing's active sheet is exported as `<name>.dxf`.
+
+Exporting drawings needs a Fusion build with the drawing API. On builds without it the drawing is skipped
+and reported in the summary like any other failure.
+
 File Name Options allow you to specify the naming convention for output files.  
 If you select 'Document Name' you can choose whether or not to append the version number to the file name.
 
@@ -76,6 +90,10 @@ If a design cannot be exported, it is skipped and the run continues. At the end 
 list of failures is written to **Project-Archiver-errors.txt** in the output folder.
 
 Designs that contain linked components are archived as **.f3z** files, since a single .f3d cannot store them.
+
+### What's new in 2.2.0<a name="Changelog-2.2.0"></a>
+
+* New **DXF** export type: every 2D sketch in a design, and Fusion drawings, can be archived as DXF.
 
 ### What's new in 2.1.1<a name="Changelog"></a>
 
