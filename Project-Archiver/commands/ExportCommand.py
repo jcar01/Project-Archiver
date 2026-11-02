@@ -68,6 +68,31 @@ def sanitize_filename(name):
     return ILLEGAL_FILENAME_CHARS.sub('-', name)
 
 
+def _pump_events():
+    """Let Fusion repaint and process pending document events.
+
+    adsk.doEvents is injected by the Fusion runtime rather than defined in the
+    adsk package, so it is looked up defensively.
+    """
+    try:
+        adsk.doEvents()
+    except Exception:
+        pass
+
+
+def _sleep_with_events(seconds):
+    time.sleep(seconds)
+    _pump_events()
+
+
+def update_status(message):
+    """Set the message in the lower-right corner of the Fusion window."""
+    try:
+        adsk.core.Application.get().userInterface.statusMessage = message
+    except Exception:
+        pass
+
+
 def export_project(root_folder, output_folder, file_types, write_version, name_option, folder_preserve,
                    include_hidden=False, selected_folders=None):
     """Archive the active project, optionally limited to selected top-level folders.
@@ -123,6 +148,11 @@ def export_folder(root_folder, output_folder, file_types, write_version, name_op
 
 def export_files(files, output_folder, file_types, write_version, name_option, include_hidden):
     for file in files:
+        # Show progress and let Fusion finish closing the previous document
+        # before the next open() call starts.
+        update_status('Project-Archiver: {}'.format(file.name))
+        _pump_events()
+
         if file.fileExtension == "f3d":
             if not open_doc(file):
                 continue
@@ -314,22 +344,33 @@ def _collect_sketch_targets(component, prefix=''):
 def _export_sketch_dxf(export_mgr, sketch, file_path):
     """Export one sketch to DXF and return True on success.
 
-    createDXFSketchExportOptions is the current API but still marked preview, so
-    fall back to the retired Sketch.saveAsDXF when it is unavailable or fails.
-    """
-    create_options = getattr(export_mgr, 'createDXFSketchExportOptions', None)
-    if create_options is not None:
-        try:
-            export_options = create_options(file_path, sketch)
-            if export_options is not None and export_mgr.execute(export_options):
-                return True
-        except Exception:
-            pass
+    Sketch.saveAsDXF is tried first. createDXFSketchExportOptions is still a
+    preview API ("do not use it in distributed programs") and exporting a very
+    large sketch through it was reported to hang Fusion, so the preview API is
+    only used when the older method is no longer present.
 
+    Exactly one implementation runs per sketch. Retrying with the second one
+    would double the work on a large sketch, which is exactly what we do not
+    want when the first attempt is slow.
+    """
     save_as_dxf = getattr(sketch, 'saveAsDXF', None)
-    if save_as_dxf is None:
+    if save_as_dxf is not None:
+        try:
+            return bool(save_as_dxf(file_path))
+        except Exception:
+            return False
+
+    create_options = getattr(export_mgr, 'createDXFSketchExportOptions', None)
+    if create_options is None:
         return False
-    return bool(save_as_dxf(file_path))
+
+    try:
+        export_options = create_options(file_path, sketch)
+        if export_options is None:
+            return False
+        return bool(export_mgr.execute(export_options))
+    except Exception:
+        return False
 
 
 def export_sketch_dxfs(export_mgr, folder, output_name, design):
@@ -356,12 +397,17 @@ def export_sketch_dxfs(export_mgr, folder, output_name, design):
             name = output_name
 
         export_name = dup_check(folder + name + '.dxf')
+        update_status('Project-Archiver: DXF {}'.format(sketch.name))
+        _pump_events()
+
         try:
             if not _export_sketch_dxf(export_mgr, sketch, export_name):
                 raise RuntimeError('DXF export failed')
             written_files.append(export_name)
         except Exception as e:
             EXPORT_ERRORS.append("{} (DXF): {}".format(os.path.basename(export_name), str(e)))
+
+        _pump_events()
 
     return written_files
 
@@ -411,25 +457,38 @@ def close_active_doc(wait_for_files=None, timeout=10.0):
     ExportManager.execute() is not documented to be fully synchronous for the
     on-disk write, and closing a document too early has been reported to crash
     Fusion or leave a truncated export. So when the paths that were just
-    written are given, poll each file's size until it is stable across two
-    checks before closing, capped at `timeout` seconds so a failed export
-    cannot hang the whole batch.
+    written are given, wait until every file is non-empty and its size has not
+    changed between two checks, capped at `timeout` seconds.
+
+    All files are polled in one loop, `timeout` seconds in total. Waiting per
+    file used to block the UI for at least 0.5 s for every export, which added
+    up to a real freeze on documents with many sketches. Events are pumped on
+    each pass so Fusion stays responsive.
     """
     if wait_for_files:
         if isinstance(wait_for_files, str):
             wait_for_files = [wait_for_files]
+
+        previous_sizes = dict((path, -1) for path in wait_for_files)
         deadline = time.time() + timeout
-        for file_path in wait_for_files:
-            last_size = -1
-            while time.time() < deadline:
+
+        while time.time() < deadline:
+            settled = True
+            for file_path in wait_for_files:
                 try:
                     size = os.path.getsize(file_path)
                 except OSError:
                     size = -1
-                if size >= 0 and size == last_size:
-                    break
-                last_size = size
-                time.sleep(0.5)
+
+                # A zero-length file may still be in the middle of being written.
+                if size <= 0 or size != previous_sizes[file_path]:
+                    settled = False
+                previous_sizes[file_path] = size
+
+            if settled:
+                break
+
+            _sleep_with_events(0.25)
 
     app = adsk.core.Application.get()
     document = app.activeDocument
@@ -772,6 +831,7 @@ class ExportCommand(apper.Fusion360CommandBase):
             errors.append('Electronics documents:')
             errors.extend(ELECTRONICS_ERRORS)
         report_errors(ao.ui, output_folder, errors)
+        update_status('')
 
     def on_create(self, command: adsk.core.Command, inputs: adsk.core.CommandInputs):
         EXPORT_ERRORS.clear()

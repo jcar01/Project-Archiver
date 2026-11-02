@@ -78,6 +78,10 @@ Select **DXF** to archive 2D geometry to `.dxf` files:
 Exporting drawings needs a Fusion build with the drawing API. On builds without it the drawing is skipped
 and reported in the summary like any other failure.
 
+Very large sketches can take minutes inside Fusion itself. The add-in reports the document it is working on in
+the status bar, lets Fusion process its event queue between documents, and uses one exporter per sketch
+instead of retrying with a second one, so it no longer adds its own stalls on top.
+
 File Name Options allow you to specify the naming convention for output files.  
 If you select 'Document Name' you can choose whether or not to append the version number to the file name.
 
@@ -95,6 +99,12 @@ If a design cannot be exported, it is skipped and the run continues. At the end 
 list of failures is written to **Project-Archiver-errors.txt** in the output folder.
 
 Designs that contain linked components are archived as **.f3z** files, since a single .f3d cannot store them.
+
+### What's new in 2.3.1<a name="Changelog-2.3.1"></a>
+
+* DXF export is far less likely to stall Fusion: it uses the stable sketch exporter, reports progress in the
+  status bar, gives Fusion time to process events between documents, and no longer waits 0.5 s per written
+  file (which could add up to a freeze on documents with many sketches).
 
 ### What's new in 2.3.0<a name="Changelog-2.3.0"></a>
 
