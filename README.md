@@ -100,6 +100,11 @@ list of failures is written to **Project-Archiver-errors.txt** in the output fol
 
 Designs that contain linked components are archived as **.f3z** files, since a single .f3d cannot store them.
 
+### What's new in 2.3.2<a name="Changelog-2.3.2"></a>
+
+* The add-in now waits for each document to finish loading, and for the previous document to finish closing,
+  before it starts the next export. This avoids racing Fusion's document model on very large assemblies.
+
 ### What's new in 2.3.1<a name="Changelog-2.3.1"></a>
 
 * DXF export is far less likely to stall Fusion: it uses the stable sketch exporter, reports progress in the
@@ -142,6 +147,14 @@ project that the currently open design belongs to.
 
 Another add-in left a module called `config` in Fusion's shared Python interpreter. Reloading the add-in
 (or restarting Fusion) after updating to this version resolves it.
+
+**Fusion crashes while archiving a very large assembly**
+
+Fusion itself can crash while a large cloud document is still loading. The add-in waits for each document to
+finish initialising and for the previous one to finish closing before continuing, but it cannot catch a native
+crash. If one document reproducibly crashes Fusion, leave it out with **Folders to archive** (or untick its
+folder) and archive it on its own. If it also crashes with the add-in disabled, it is a Fusion issue worth
+reporting to Autodesk.
 
 ### For Developers<a name="For-Developers"></a>
 

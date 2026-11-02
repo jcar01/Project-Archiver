@@ -93,6 +93,55 @@ def update_status(message):
         pass
 
 
+def wait_for_document_ready(timeout=20.0):
+    """Wait until a just-opened document has finished initialising.
+
+    Fusion keeps loading cloud data (references, component properties,
+    migration) after documents.open() returns. Exporting during that phase is
+    how the add-in ended up racing Fusion's data model on large assemblies, so
+    give the document a chance to settle first. Bounded so a document with
+    missing references cannot stall the run forever.
+    """
+    app = adsk.core.Application.get()
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            document = app.activeDocument
+            product = app.activeProduct
+            if document is not None and product is not None:
+                if getattr(document, 'isUpToDate', True):
+                    return True
+        except Exception:
+            pass
+
+        _sleep_with_events(0.25)
+
+    return False
+
+
+def wait_for_document_closed(previous_count, timeout=15.0):
+    """Wait until a closed document has actually been removed from Fusion.
+
+    close() returns while Fusion is still emitting documentClosed/collaboration
+    events. Opening the next document on top of that overlap stressed the cloud
+    data model, so serialise the two.
+    """
+    app = adsk.core.Application.get()
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            if app.documents.count < previous_count:
+                return True
+        except Exception:
+            return False
+
+        _sleep_with_events(0.2)
+
+    return False
+
+
 def export_project(root_folder, output_folder, file_types, write_version, name_option, folder_preserve,
                    include_hidden=False, selected_folders=None):
     """Archive the active project, optionally limited to selected top-level folders.
@@ -235,6 +284,11 @@ def open_doc(data_file):
         document.activate()
     except Exception:
         pass
+
+    # Let Fusion finish loading cloud data (references, migration, component
+    # properties) before exporting. The add-in used to start exporting while
+    # that was still running, which is where it raced Fusion on large assemblies.
+    wait_for_document_ready()
 
     return True
 
@@ -506,9 +560,19 @@ def close_active_doc(wait_for_files=None, timeout=10.0):
         return
 
     try:
+        open_count = app.documents.count
+    except Exception:
+        open_count = None
+
+    try:
         document.close(False)
     except Exception:
         pass
+
+    # close() can return before Fusion has removed the document. Opening the
+    # next one on top of that overlap stressed the cloud data model.
+    if open_count is not None:
+        wait_for_document_closed(open_count)
 
 
 def show_all_hidden(design):
