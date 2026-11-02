@@ -51,6 +51,10 @@ ELECTRONICS_EXPORTS = {
 # the EAGLE export extensions (.sch/.brd/.lbr) produced on export.
 ELECTRONICS_EXTENSIONS = {'fprj', 'fsch', 'fbrd', 'flbr'}
 
+# Label for the "files that live directly in the project" entry in the folder
+# selection dropdown. Can't collide with a real folder name in practice.
+ROOT_FILES_LABEL = 'Project root files (outside any folder)'
+
 # Characters Windows/macOS do not allow in a file name. A Fusion document name
 # can legitimately contain any of these (e.g. "worm gear 30:1"), and passing
 # them straight through to ExportManager raises RuntimeError: 3 ("The file name
@@ -64,8 +68,42 @@ def sanitize_filename(name):
     return ILLEGAL_FILENAME_CHARS.sub('-', name)
 
 
+def export_project(root_folder, output_folder, file_types, write_version, name_option, folder_preserve,
+                   include_hidden=False, selected_folders=None):
+    """Archive the active project, optionally limited to selected top-level folders.
+
+    selected_folders is None for a full archive. Otherwise it is the set of
+    checked dropdown entries: top-level folder names plus ROOT_FILES_LABEL for
+    the files that sit directly in the project.
+    """
+    if selected_folders is None:
+        export_folder(root_folder, output_folder, file_types, write_version, name_option,
+                      folder_preserve, include_hidden)
+        return
+
+    if ROOT_FILES_LABEL in selected_folders:
+        export_files(root_folder.dataFiles, output_folder, file_types, write_version, name_option,
+                     include_hidden)
+
+    for folder in root_folder.dataFolders:
+        if folder.name not in selected_folders:
+            continue
+
+        if folder_preserve:
+            new_folder = os.path.join(output_folder, sanitize_filename(folder.name), "")
+
+            if not os.path.exists(new_folder):
+                os.makedirs(new_folder)
+        else:
+            new_folder = output_folder
+
+        export_folder(folder, new_folder, file_types, write_version, name_option, folder_preserve,
+                      include_hidden)
+
+
 def export_folder(root_folder, output_folder, file_types, write_version, name_option, folder_preserve,
                   include_hidden=False):
+    """Recursively archive one folder and everything below it."""
     for folder in root_folder.dataFolders:
 
         if folder_preserve:
@@ -79,7 +117,12 @@ def export_folder(root_folder, output_folder, file_types, write_version, name_op
         export_folder(folder, new_folder, file_types, write_version, name_option, folder_preserve,
                       include_hidden)
 
-    for file in root_folder.dataFiles:
+    export_files(root_folder.dataFiles, output_folder, file_types, write_version, name_option,
+                 include_hidden)
+
+
+def export_files(files, output_folder, file_types, write_version, name_option, include_hidden):
+    for file in files:
         if file.fileExtension == "f3d":
             if not open_doc(file):
                 continue
@@ -605,6 +648,30 @@ def update_name_inputs(command_inputs, selection):
         command_inputs.itemById('write_version').isVisible = True
 
 
+def get_folder_selection(command_inputs):
+    """Return None for a full-project archive, otherwise the checked folder names.
+
+    The dropdown also contains ROOT_FILES_LABEL for files that sit directly in
+    the project. Returning None when everything is checked keeps the default
+    behavior (and picks up folders created later) unchanged.
+    """
+    folder_input = command_inputs.itemById('folder_select_id')
+    if folder_input is None:
+        return None
+
+    items = folder_input.listItems
+    selected = set()
+    for i in range(items.count):
+        item = items.item(i)
+        if item.isSelected:
+            selected.add(item.name)
+
+    if len(selected) == items.count:
+        return None
+
+    return selected
+
+
 def report_errors(ui, output_folder, errors):
     """Show a bounded error dialog and write the full list beside the exports."""
     if not errors:
@@ -643,6 +710,11 @@ class ExportCommand(apper.Fusion360CommandBase):
 
         folder_preserve = input_values['folder_preserve_id']
         include_hidden = input_values['include_hidden_id']
+
+        selected_folders = get_folder_selection(inputs)
+        if selected_folders is not None and not selected_folders:
+            ao.ui.messageBox('Select at least one folder to archive.')
+            return
 
         # TODO broken?????
         file_types = inputs.itemById('file_types_input').listItems
@@ -689,8 +761,8 @@ class ExportCommand(apper.Fusion360CommandBase):
         except Exception:
             pass
 
-        export_folder(root_folder, output_folder, file_types, write_version, name_option, folder_preserve,
-                      include_hidden)
+        export_project(root_folder, output_folder, file_types, write_version, name_option, folder_preserve,
+                       include_hidden, selected_folders)
 
         errors = []
         if EXPORT_ERRORS:
@@ -707,6 +779,23 @@ class ExportCommand(apper.Fusion360CommandBase):
         default_dir = apper.get_default_dir(config.app_name)
 
         inputs.addStringValueInput('output_folder', 'Output Folder:', default_dir)
+
+        folder_input = inputs.addDropDownCommandInput('folder_select_id', 'Folders to archive',
+                                                      adsk.core.DropDownStyles.CheckBoxDropDownStyle)
+        folder_items = folder_input.listItems
+        folder_items.add(ROOT_FILES_LABEL, True)
+
+        try:
+            active_project = AppObjects().app.data.activeProject
+        except Exception:
+            active_project = None
+
+        if active_project is not None:
+            try:
+                for folder in active_project.rootFolder.dataFolders:
+                    folder_items.add(folder.name, True)
+            except Exception:
+                pass
 
         drop_input_list = inputs.addDropDownCommandInput('file_types_input', 'Export Types',
                                                          adsk.core.DropDownStyles.CheckBoxDropDownStyle)

@@ -53,6 +53,11 @@ It then allows you to enter a path. Type in a path into the **Output Path** fiel
 * For OSX this might be: **/Users/*username*/Desktop/Test/**
 * For Windows this might be something like **C:\Test**
 
+**Folders to archive** lists the project's top-level folders plus **Project root files (outside any folder)**.
+Everything is ticked by default, which archives the whole project exactly as before. Untick a folder to leave
+it out of this run, or untick the root entry to skip files that sit directly in the project. Ticking a folder
+still includes everything beneath it, so nested sub-folders are archived with it.
+
 Under **Export Types** select the different files types you want to export.  You can select multiple types.
 
 #### Electronics documents
@@ -90,6 +95,10 @@ If a design cannot be exported, it is skipped and the run continues. At the end 
 list of failures is written to **Project-Archiver-errors.txt** in the output folder.
 
 Designs that contain linked components are archived as **.f3z** files, since a single .f3d cannot store them.
+
+### What's new in 2.3.0<a name="Changelog-2.3.0"></a>
+
+* New **Folders to archive** selector: archive only the chosen top-level folders of the project instead of the whole project.
 
 ### What's new in 2.2.0<a name="Changelog-2.2.0"></a>
 
