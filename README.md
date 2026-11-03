@@ -30,9 +30,9 @@ Project Archiver is an add-in for Autodesk Fusion that exports the designs, draw
 
 ## Download and install
 
-1. Download **Project-Archiver.zip** from the [latest release](https://github.com/tapnair/Project-Archiver/releases/latest/download/Project-Archiver.zip).
+1. Download the **Project-Archiver** zip from the [latest release](../../releases/latest).
 
-   *Use this file, not the "Source code" downloads on the [Releases page](https://github.com/tapnair/Project-Archiver/releases/latest). Those unzip to a folder with the version in its name, and Fusion only loads an add-in from a folder with the same name as the add-in.*
+   *Use the zip attached to the release, not the "Source code" downloads. Those unzip to a folder with the version in its name, and Fusion only loads an add-in from a folder with the same name as the add-in.*
 
 2. Unzip it to a permanent location on your computer. You get a folder named **Project-Archiver**.
 
@@ -163,7 +163,7 @@ Every export command uses this layout. Export active folder puts a folder's file
 
 | Problem | What to do |
 |---|---|
-| Project-Archiver doesn't appear in Scripts and Add-Ins, or won't load | Make sure you selected the folder named exactly **Project-Archiver**, the one that contains Project-Archiver.py. If you downloaded a "Source code" zip, download **Project-Archiver.zip** from the [latest release](https://github.com/tapnair/Project-Archiver/releases/latest) instead. |
+| Project-Archiver doesn't appear in Scripts and Add-Ins, or won't load | Make sure you selected the folder named exactly **Project-Archiver**, the one that contains Project-Archiver.py. If you downloaded a "Source code" zip, download the **Project-Archiver** zip from the [latest release](../../releases/latest) instead. |
 | "Fusion could not find an active project" (or folder, or projects in the hub) | Open the **Data Panel**, navigate to the project, folder or hub you want to archive, and run the command again. |
 | A file is listed as could not be opened | Open it in Fusion to see why. An upload that never finished processing in the cloud, for example, can't be opened. If it was open in Fusion during an all-versions export, close it and export again with **Skip existing files**. |
 | The summary says files were skipped because they already exist | The output folder already has files with those names. Choose **Overwrite** or **Rename with -dup** under **Advanced options**, or choose a different output folder. |
