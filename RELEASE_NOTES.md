@@ -12,7 +12,7 @@ jcar01's 3.1.0 is based on upstream 3.0.0 and adds the pieces the 2.x fork had t
 
 ### Fixed
 
-- **Document lifecycle waits.** The add-in now waits for a newly opened document to report that it is up to date before exporting it, and for a closed document to leave `app.documents` before opening the next one. This is aimed at a native Fusion crash reported on a large assembly: Fusion died on its main thread inside its cloud document model seconds after opening the design, while migration and component-property work were still running. The add-in cannot catch a native crash, but it can stop adding to the pressure.
+- **Document lifecycle waits.** The add-in now waits for a newly opened document to report that it is up to date before exporting it, and for a closed document to leave `app.documents` before opening the next one. This is aimed at a native Fusion crash reported on a large assembly: Fusion died on its main thread inside its cloud document model seconds after opening the design, while migration and component-property work were still running. The add-in cannot catch a native crash, but it can stop adding to the pressure. The assembly that reproduced the crash has since exported without it.
 - **Sketch DXF export is single-pass.** It uses the stable `Sketch.saveAsDXF` first and only falls back to the preview `createDXFSketchExportOptions` when that method is gone, so a slow sketch is never exported twice.
 
 ### Install
