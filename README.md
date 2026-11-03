@@ -1,6 +1,12 @@
 # Project-Archiver
 The archiver script will open all Fusion 360 3D data in a project and export it as STEP to a local location of your choosing. 
 
+> **About this fork:** this is jcar01's 2.x line. On top of the 2.1.1 fixes it adds DXF export for 2D sketches
+> and Fusion drawings, folder selection inside a project, `.f3z` archives for designs with linked components,
+> and stability fixes. Upstream
+> [3.0.0](https://github.com/tapnair/Project-Archiver/releases/tag/v3.0.0) is a separate rebuild with a
+> different feature set - use whichever fits your workflow.
+
 [How to install](#How-to-install)  
 [How to use](#How-to-use)   
 [For Developers](#For-Developers)
