@@ -13,7 +13,8 @@ ui = app.userInterface
 
 CMD_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_exportProject'
 CMD_NAME = 'Export active project'
-CMD_Description = 'Exports the designs, drawings and electronics documents in the project selected in the Data Panel'
+CMD_Description = ('Exports the designs, drawings and electronics documents in the project selected in the Data Panel, '
+                   'or in the folders you choose')
 
 # Specify that the command will be promoted to the panel.
 IS_PROMOTED = True
@@ -70,7 +71,8 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     inputs = args.command.commandInputs
 
     # Show which project will be archived, since that's whatever is selected in the Data Panel
-    export_dialog.add_export_inputs(inputs, 'Project:', project.name, project.parentHub.name, project.name)
+    export_dialog.add_export_inputs(inputs, 'Project:', project.name, project.parentHub.name, project.name,
+                                    project_folders=list(project.rootFolder.dataFolders))
 
     futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)
     futil.add_handler(args.command.inputChanged, command_input_changed, local_handlers=local_handlers)

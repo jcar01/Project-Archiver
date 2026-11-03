@@ -14,10 +14,56 @@ so this module collects what's been learned:
 - Every version of a data file has the same id; only the version id tells them apart.
 """
 
+import time
+
 import adsk.core
 import adsk.fusion
 
 app = adsk.core.Application.get()
+
+
+def wait_until_ready(document, timeout=20.0):
+    """Wait until a just-opened document has finished loading its cloud data.
+
+    Fusion keeps loading references, component properties and migration after documents.open()
+    returns. Exporting during that phase races Fusion's document model on large assemblies, so
+    give it a moment. Bounded so a document with missing references can't stall the run.
+    """
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            if document is not None and document.isValid and getattr(document, 'isUpToDate', True):
+                if app.activeProduct is not None:
+                    return True
+        except RuntimeError:
+            pass
+
+        adsk.doEvents()
+        time.sleep(0.1)
+
+    return False
+
+
+def wait_until_closed(previous_count, timeout=10.0):
+    """Wait until a closed document has actually left app.documents.
+
+    close() can return while Fusion is still emitting documentClosed and collaboration events.
+    Opening the next document on top of that overlap stresses the cloud document model.
+    """
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            if app.documents.count < previous_count:
+                return True
+        except RuntimeError:
+            pass
+
+        adsk.doEvents()
+        time.sleep(0.1)
+
+    return False
 
 
 def get_active_hub():
@@ -99,6 +145,7 @@ def open_data_file(data_file):
             except RuntimeError:
                 pass
             if get_version_id(app.activeDocument) == data_file.versionId:
+                wait_until_ready(document)
                 return document
 
     return None

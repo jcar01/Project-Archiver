@@ -40,7 +40,7 @@ from . import document_utils
 from .export_options import (DESIGN_EXTENSIONS, DESIGN_FILE_EXTENSION, DRAWING_EXPORTS, DRAWING_FILE_EXTENSION,
                              ELECTRONICS_EXPORTS, EXISTING_FILES_OVERWRITE, EXISTING_FILES_SKIP,
                              EXPORTED_FILE_EXTENSIONS, NAME_DESCRIPTION, NAME_DOCUMENT, NAME_PART_NUMBER,
-                             ExportOptions, ExportResults)
+                             ROOT_FILES_LABEL, ExportOptions, ExportResults)
 from .file_utils import dup_check, get_output_folder, sanitize_name
 from .log_utils import LOG_FILE_NAME, end_log, log, start_log
 
@@ -52,6 +52,80 @@ pending_export = None
 
 # Longest list of files shown in the summary message; the log file lists every file
 MAX_LISTED_IN_SUMMARY = 15
+
+
+def get_f3d_extension(data_file):
+    """Return .f3z for a design that references other designs, otherwise .f3d."""
+    try:
+        return '.f3z' if data_file.hasChildReferences else '.f3d'
+    except RuntimeError:
+        return '.f3d'
+
+
+def file_has_content(path, timeout=3.0):
+    """Return True once a freshly written file is non-empty, giving Fusion a moment to flush it."""
+    deadline = time.time() + timeout
+
+    while True:
+        try:
+            if os.path.getsize(path) > 0:
+                return True
+        except OSError:
+            pass
+
+        if time.time() >= deadline:
+            return False
+
+        adsk.doEvents()
+        time.sleep(0.2)
+
+
+def collect_sketch_targets(component, prefix=''):
+    """Yield (sketch, name prefix) for a component and its local sub-components.
+
+    Referenced (linked) occurrences are skipped: their sketches belong to a different document,
+    which is archived on its own when that file is reached.
+    """
+    for sketch in component.sketches:
+        yield sketch, prefix
+
+    for occurrence in component.occurrences:
+        try:
+            if occurrence.isReferencedComponent:
+                continue
+        except RuntimeError:
+            pass
+
+        child_prefix = prefix + sanitize_name(occurrence.name) + '_'
+        for target in collect_sketch_targets(occurrence.component, child_prefix):
+            yield target
+
+
+def export_sketch_dxf(export_mgr, sketch, file_path):
+    """Export one sketch to DXF and return True on success.
+
+    Sketch.saveAsDXF is tried first. createDXFSketchExportOptions is a preview API and exporting a
+    very large sketch through it has hung Fusion, so it is only used when saveAsDXF is gone.
+    Exactly one exporter runs per sketch; retrying with the second doubles the work.
+    """
+    save_as_dxf = getattr(sketch, 'saveAsDXF', None)
+    if save_as_dxf is not None:
+        try:
+            return bool(save_as_dxf(file_path))
+        except Exception:
+            return False
+
+    create_options = getattr(export_mgr, 'createDXFSketchExportOptions', None)
+    if create_options is None:
+        return False
+
+    try:
+        export_options = create_options(file_path, sketch)
+        if export_options is None:
+            return False
+        return bool(export_mgr.execute(export_options))
+    except Exception:
+        return False
 
 
 def export(options: ExportOptions):
@@ -134,7 +208,7 @@ class Exporter:
         if self.open_before_export is None:
             self.open_before_export = frozenset(document_utils.get_open_version_ids())
 
-        start_log(self.log_folder, [
+        log_lines = [
             'Hub: {}'.format(hub_name),
             'Project: {}'.format(project.name),
             'Folder: {}'.format('/'.join(folder_path) if folder_path else 'whole project'),
@@ -142,15 +216,21 @@ class Exporter:
             'Design export types: {}'.format(', '.join(options.design_types) or 'none'),
             'Drawing export types: {}'.format(', '.join(options.drawing_types) or 'none'),
             'Export electronics documents: {}'.format(yes_no(HAS_ELECTRON and options.export_electronics)),
+            'Export 2D sketches to DXF: {}'.format(yes_no(options.export_sketches)),
             'File name option: {}{}'.format(options.name_option, ', with versions' if options.write_version else ''),
             'Preserve folder structure: {}'.format(yes_no(options.preserve_folders)),
             'Existing files: {}'.format(options.existing_files),
             'Skip designs used by other designs: {}'.format(yes_no(options.skip_used_designs)),
             'Include hidden bodies and components: {}'.format(yes_no(options.include_hidden)),
             'Export all versions: {}'.format(yes_no(options.all_versions)),
-        ])
+        ]
+        if options.selected_folders is not None:
+            log_lines.append('Folders: {}'.format(', '.join(sorted(options.selected_folders))))
+        start_log(self.log_folder, log_lines)
 
-        exports = self.collect_exports(root_folder, output_folder)
+        # Folder selection only applies to a whole-project export, not to a folder or hub export
+        selected_folders = options.selected_folders if options.data_folder is None else None
+        exports = self.collect_exports(root_folder, output_folder, selected_folders)
         if exports:
             if options.all_versions and not self.confirmed and not self.confirm_all_versions(exports):
                 self.results.declined = True
@@ -160,22 +240,31 @@ class Exporter:
 
         end_log(self.get_summary_messages())
 
-    def collect_exports(self, data_folder, output_folder):
+    def collect_exports(self, data_folder, output_folder, selected_folders=None):
         """List the files to export in a folder and its subfolders, without opening any of them.
 
         Returns (export method, data file, output folder) for each file, so the total is known for
         the progress dialog. Creates the output folders and logs the files that aren't exported.
+        selected_folders limits a whole-project export to those top-level folders, plus
+        ROOT_FILES_LABEL for files that sit directly in the project.
         """
         options = self.options
         exports = []
 
         for folder in data_folder.dataFolders:
+            if selected_folders is not None and folder.name not in selected_folders:
+                continue
+
             new_folder = output_folder
             if options.preserve_folders:
                 new_folder = os.path.join(output_folder, sanitize_name(folder.name), '')
                 os.makedirs(new_folder, exist_ok=True)
 
             exports += self.collect_exports(folder, new_folder)
+
+        # Deeper levels always include their files; the root selection decides about project-level ones
+        if selected_folders is not None and ROOT_FILES_LABEL not in selected_folders:
+            return exports
 
         for data_file in data_folder.dataFiles:
             extension = data_file.fileExtension
@@ -272,19 +361,16 @@ class Exporter:
             log('Skipped: {} (used by {})'.format(self.project_path(data_file), ', '.join(parents)))
             return
 
-        # An F3D of a design that references other designs only links to them, and Fusion can't
-        # open it on its own. The API can't create an F3Z, so these are skipped for F3D. This is
-        # known without opening the design, so it's recorded even if the design is skipped below.
-        skip_f3d = 'F3D' in options.design_types and data_file.hasChildReferences
-        if skip_f3d:
-            self.results.f3d_skipped.append(self.project_path(data_file))
-            log('Not exported as F3D: {} (references other designs; use File > Export in Fusion to save an F3Z)'
-                .format(self.project_path(data_file)))
+        # The output name is known without opening the design when it's the document name. F3D
+        # files use .f3z when the design references others, which is also known from the data file.
+        # Sketch DXFs can't be predicted without opening the design, so don't skip when they're on.
+        if options.name_option == NAME_DOCUMENT and not options.export_sketches:
+            extensions = []
+            for type_name, extension in DESIGN_EXTENSIONS.items():
+                if type_name not in options.design_types:
+                    continue
+                extensions.append(get_f3d_extension(data_file) if type_name == 'F3D' else extension)
 
-        # The output name is known without opening the design when it's the document name
-        if options.name_option == NAME_DOCUMENT:
-            extensions = [extension for type_name, extension in DESIGN_EXTENSIONS.items()
-                          if type_name in options.design_types and not (type_name == 'F3D' and skip_f3d)]
             if self.all_exports_exist(data_file, output_folder, extensions):
                 return
 
@@ -332,7 +418,18 @@ class Exporter:
 
         finally:
             if document_utils.get_version_id(document) not in self.open_before_export:
+                try:
+                    open_count = app.documents.count
+                except RuntimeError:
+                    open_count = None
+
                 document_utils.close_document(document)
+
+                # Opening the next document while this close is still finishing stresses Fusion's
+                # document model on large assemblies, so let the close complete first.
+                if open_count is not None:
+                    document_utils.wait_until_closed(open_count)
+
             self.note_workspace()
 
     def note_workspace(self):
@@ -360,13 +457,19 @@ class Exporter:
         export_mgr = design.exportManager
         output_name = self.get_design_name(design)
 
-        # Designs that reference other designs aren't exported as F3D; export_design_file records them.
-        # The data file is checked rather than document.allDocumentReferences, which raises an error
-        # when the design was loaded in the background by an assembly.
-        if 'F3D' in options.design_types and not document.dataFile.hasChildReferences:
-            export_name = self.get_export_path(folder + output_name + DESIGN_EXTENSIONS['F3D'])
+        # A design that references other designs is archived as .f3z, which bundles them. The data
+        # file is checked rather than document.allDocumentReferences, which raises an error when the
+        # design was loaded in the background by an assembly. Fusion's API isn't documented to
+        # support .f3z, so verify that a real file came out and record a failure if it did not.
+        if 'F3D' in options.design_types:
+            extension = get_f3d_extension(document.dataFile)
+            export_name = self.get_export_path(folder + output_name + extension)
             if export_name is not None:
                 export_mgr.execute(export_mgr.createFusionArchiveExportOptions(export_name))
+                if extension == '.f3z' and not file_has_content(export_name):
+                    self.record_type_failure(
+                        '{}: F3Z export failed (use File > Export in Fusion to save it)'.format(output_name),
+                        export_name)
 
         # The other types export the root component, and leave out anything hidden
         create_options = {
@@ -377,24 +480,58 @@ class Exporter:
             'STL': lambda filename: export_mgr.createSTLExportOptions(design.rootComponent, filename),
         }
         other_types = [type_name for type_name in create_options if type_name in options.design_types]
-        if not other_types:
+
+        shown = []
+        if other_types:
+            shown = document_utils.show_hidden_geometry(design) if options.include_hidden else []
+            if shown:
+                log('Showed {} hidden bodies and components in {}'.format(len(shown),
+                                                                           self.project_path(document.dataFile)))
+
+            try:
+                for type_name in other_types:
+                    export_name = self.get_export_path(folder + output_name + DESIGN_EXTENSIONS[type_name])
+                    if export_name is not None:
+                        export_mgr.execute(create_options[type_name](export_name))
+
+            finally:
+                # Exported documents are closed without saving, but one the user already had open stays open
+                if shown and document_utils.get_version_id(document) in self.open_before_export:
+                    document_utils.hide_again(shown)
+
+        if options.export_sketches:
+            self.export_sketches(design, folder, output_name)
+
+    def export_sketches(self, design, folder, output_name):
+        """Export every 2D sketch in the design to its own DXF file.
+
+        A design with one sketch is written as <name>.dxf. With several, each file gets the sketch
+        name, and the component name for sketches inside a local component, so nothing collides.
+        A sketch that fails is recorded and the others are still exported.
+        """
+        try:
+            targets = list(collect_sketch_targets(design.rootComponent))
+        except Exception as e:
+            self.record_type_failure('{}: DXF sketches: {}'.format(output_name, e))
             return
 
-        shown = document_utils.show_hidden_geometry(design) if options.include_hidden else []
-        if shown:
-            log('Showed {} hidden bodies and components in {}'.format(len(shown),
-                                                                       self.project_path(document.dataFile)))
+        multiple = len(targets) > 1
 
-        try:
-            for type_name in other_types:
-                export_name = self.get_export_path(folder + output_name + DESIGN_EXTENSIONS[type_name])
-                if export_name is not None:
-                    export_mgr.execute(create_options[type_name](export_name))
+        for sketch, prefix in targets:
+            if multiple:
+                name = '{}_{}{}'.format(output_name, prefix, sanitize_name(sketch.name))
+            else:
+                name = output_name
 
-        finally:
-            # Exported documents are closed without saving, but one the user already had open stays open
-            if shown and document_utils.get_version_id(document) in self.open_before_export:
-                document_utils.hide_again(shown)
+            export_name = self.get_export_path(folder + name + '.dxf')
+            if export_name is None:
+                continue
+
+            try:
+                if not export_sketch_dxf(design.exportManager, sketch, export_name):
+                    raise RuntimeError('DXF export failed')
+            except Exception as e:
+                self.record_type_failure('{} (DXF): {}'.format(os.path.basename(export_name), e), export_name)
 
     def export_drawing(self, document, folder):
         """Export a drawing to each selected drawing type. Each type is one file containing every sheet.

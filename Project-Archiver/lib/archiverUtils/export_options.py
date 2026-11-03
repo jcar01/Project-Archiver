@@ -44,6 +44,9 @@ DESIGN_FILE_EXTENSION = 'f3d'
 DRAWING_FILE_EXTENSION = 'f2d'
 EXPORTED_FILE_EXTENSIONS = {DESIGN_FILE_EXTENSION, DRAWING_FILE_EXTENSION} | set(ELECTRONICS_EXPORTS)
 
+# Label for the "files that sit directly in the project" entry in the folder selection table
+ROOT_FILES_LABEL = 'Project root files (outside any folder)'
+
 
 @dataclass
 class ExportOptions:
@@ -60,6 +63,13 @@ class ExportOptions:
     skip_used_designs: bool = False
     include_hidden: bool = False
     all_versions: bool = False
+
+    # Export every 2D sketch in a design to its own DXF file
+    export_sketches: bool = False
+
+    # Top-level folders of the project to export, or None for all of them. ROOT_FILES_LABEL
+    # in the set means the files that sit directly in the project.
+    selected_folders: set = None
 
     # The project to export, or None for the active project
     project: adsk.core.DataProject = None

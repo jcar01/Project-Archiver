@@ -1,5 +1,29 @@
 # Release notes
 
+## 3.1.0
+
+jcar01's 3.1.0 is based on upstream 3.0.0 and adds the pieces the 2.x fork had that 3.0.0 doesn't cover.
+
+### New
+
+- **Export 2D sketches to DXF.** A new Advanced option exports every sketch in each design to its own `.dxf` file. A design with one sketch is written as `<name>.dxf`; with several, each file gets the sketch name, and the component name for sketches inside a local component. Sketches in linked components are skipped because those documents are archived on their own. Drawings already export to DXF through the **Drawing export types**.
+- **Choose folders inside a project.** Export active project now lists the project's top-level folders, plus the files that sit directly in the project, in a **Select folders** table with Select all and Select none. All rows are checked by default; unchecking skips that folder and everything under it. Export active folder and Export active hub are unchanged.
+- **F3Z for designs with linked components.** Instead of skipping F3D for a design that inserts other designs, the add-in asks Fusion for `.f3z` and checks that a real, non-empty file was written. Fusion's API isn't documented to support F3Z; if a version refuses, the design is listed in the summary with a note to use File > Export.
+
+### Fixed
+
+- **Document lifecycle waits.** The add-in now waits for a newly opened document to report that it is up to date before exporting it, and for a closed document to leave `app.documents` before opening the next one. This is aimed at a native Fusion crash reported on a large assembly: Fusion died on its main thread inside its cloud document model seconds after opening the design, while migration and component-property work were still running. The add-in cannot catch a native crash, but it can stop adding to the pressure.
+- **Sketch DXF export is single-pass.** It uses the stable `Sketch.saveAsDXF` first and only falls back to the preview `createDXFSketchExportOptions` when that method is gone, so a slow sketch is never exported twice.
+
+### Install
+
+Download **Project-Archiver-3.1.0.zip** from this fork's [Releases page](https://github.com/jcar01/Project-Archiver/releases), not the "Source code" zip. Stop any installed copy in Scripts and Add-Ins and replace its folder.
+
+### Notes
+
+- This fork is separate from upstream. If you want hub export, drawings to PDF/DWG, all versions, progress/cancel and logs, upstream 3.0.0 is the fuller product; 3.1.0 adds the sketch DXF, folder selection and F3Z behaviour on top of it.
+- Don't enable both add-ins at once; they register the same command names.
+
 ## 3.0.0
 
 Project Archiver 3.0.0 is a rebuild of the add-in on Fusion's standard Python add-in template, with new export types and options, and fixes for most of the problems reported since 2.1.0. See the [README](README.md) for how to install and use it.

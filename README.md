@@ -2,7 +2,7 @@
 
 Project Archiver is an add-in for Autodesk Fusion that exports the designs, drawings and electronics documents in your Fusion projects to files on your computer. Use it to keep a local archive of a project or a whole hub, to hand data to someone who doesn't use Fusion, or to back up projects before reorganizing them.
 
-**New in 3.0.0:** Export active hub and Export active folder, drawings, all versions, progress with cancel, a log of every file and more. See the [release notes](RELEASE_NOTES.md).
+**New in 3.1.0:** Export 2D sketches to DXF, choose which folders of a project to export, and save designs with linked components as F3Z where Fusion allows it. **New in 3.0.0:** Export active hub and Export active folder, drawings, all versions, progress with cancel, a log of every file and more. See the [release notes](RELEASE_NOTES.md).
 
 - [What it does](#what-it-does)
 - [Download and install](#download-and-install)
@@ -17,10 +17,11 @@ Project Archiver is an add-in for Autodesk Fusion that exports the designs, draw
 
 ## What it does
 
-- Exports every **design** to STEP, IGES, SAT, SMT, STL and F3D, in any combination.
+- Exports every **design** to STEP, IGES, SAT, SMT, STL and F3D, in any combination. Designs with linked components are saved as **F3Z**.
+- Exports every **2D sketch** in a design to its own DXF file.
 - Exports every **drawing** to PDF, DXF and DWG, with all sheets in one file.
 - Exports every **electronics** schematic, board and library to EAGLE .sch, .brd and .lbr files.
-- Archives a **folder**, a whole **project**, or the projects you choose from a **hub**.
+- Archives a **folder**, a whole **project**, the folders you choose inside a project, or the projects you choose from a **hub**.
 - Exports the latest version of each design, or **every version**.
 - Keeps the hub, project and folder structure, and makes names safe to use as file names on Windows and macOS.
 - Closes each design after exporting it, so even large projects don't run Fusion out of memory.
@@ -104,6 +105,7 @@ The projects are exported one at a time, each into its own folder with its own l
 |---|---|---|
 | **Project**, **Folder** or **Hub** | | What will be exported, from the Data Panel. Read-only. |
 | **Projects** and **Select projects** | All projects | Export active hub only. How many projects are selected, and a list to choose them. **OK** isn't available until at least one project is selected. |
+| **Folders** and **Select folders** | All folders | Export active project only. How many top-level folders are selected, and a list to choose them. Row 0 is the project's root files. Checking a folder includes everything under it; all rows checked exports the whole project. **OK** isn't available until at least one row is selected. |
 | **Output folder** | `~/ProjectArchiver/` | The folder to export into. Type a path or click **Browse...**. Files always go into a folder for the hub and one for each project inside it, so the same output folder works for every command and every project. |
 | **Files go to** | | Read-only. The full path the files will go to, for example `~/ProjectArchiver/My Hub/My Project/`. It updates as you change the output folder or **Preserve folder structure**. |
 | **Design export types** | STEP | Formats for each design: **IGES**, **STEP**, **SAT**, **SMT**, **F3D** and **STL**. Uncheck them all to skip designs. |
@@ -127,6 +129,7 @@ Click **Advanced options** to see these.
 | **Existing files** | Skip existing files | What to do when a file with the same name is already there: **Skip existing files**, **Rename with -dup** (adds `-dup` to the new file's name) or **Overwrite**. Skipping makes it quick to rerun an export, for example to finish one you cancelled: designs whose files all exist aren't even opened when they're named by document name. |
 | **Skip designs used by other designs?** | Off | Only exports designs that aren't inserted into another design, such as top-level assemblies. A drawing of a design doesn't count as using it. |
 | **Include hidden bodies and components?** | Off | Before exporting STEP, IGES, SAT, SMT and STL, shows every hidden body and component at every level of the design, so they're included. F3D files always keep hidden geometry, still hidden. Designs you already had open are hidden again afterward. |
+| **Export 2D sketches to DXF?** | Off | Exports every sketch in each design to its own DXF file. A design with one sketch is written as `<name>.dxf`; with several, each file is `<name>_<sketch>.dxf`, and `<name>_<component>_<sketch>.dxf` inside a local component. Sketches in linked components are skipped, since those documents are archived on their own. |
 | **Open Text Commands?** | Off | Opens Fusion's Text Commands window when the export starts, where each file is listed as it's exported. |
 
 ## What you get
@@ -147,7 +150,9 @@ Every export command uses this layout. Export active folder puts a folder's file
 
 ## Tips and limitations
 
-- **Designs that reference other designs aren't exported as F3D.** An F3D of an assembly that inserts other designs only contains links to them, and Fusion can't open it on its own ("New design cannot be created from a local file containing external references"). Its STEP and other formats are still exported, and each referenced design gets its own F3D. To keep an assembly with everything it references in one file, open it and use **File > Export** to save an **F3Z**; add-ins can't create F3Z files. The summary lists these designs.
+- **Designs that reference other designs are saved as F3Z.** An F3D of an assembly that inserts other designs only contains links to them and can't be opened on its own, so the add-in asks Fusion for `.f3z` instead, which bundles the referenced designs. Fusion's API isn't documented to support F3Z, so the add-in checks that a real file was written; if your Fusion version refuses, the design is listed in the summary and you can save it with **File > Export**. Its STEP and other formats are exported either way, and each referenced design still gets its own F3D.
+- **2D sketches export as one DXF per sketch.** A design with one sketch is written as `<name>.dxf`; with several, each file gets the sketch name, and the component name for sketches inside a local component. Sketches in linked components are skipped, since those documents are archived on their own. Drawings are separate: their DXF export uses the **Drawing export types** and contains every sheet. Very large sketches can take a long time inside Fusion itself.
+- **Each document is given time to load and close.** The add-in waits for a newly opened design to report that it's up to date before exporting it, and for a closed document to leave Fusion before opening the next one. That adds a moment per file but avoids racing Fusion's document model on large assemblies.
 - **Large exports take a while.** A STEP export of a 317-design project took about 27 minutes on a Mac. Fusion is busy for the whole export, apart from the Cancel button. For a hub, start with a few projects to see how long they take.
 - **Memory.** Each design is closed right after it's exported. Designs that an assembly references load in the background, without their own tab, and Fusion sometimes keeps them loaded until the export finishes. A single very large design still needs its own memory while it's open.
 - **Older versions of open designs.** With **Export all versions**, Fusion can't open an older version of a design while that design is open, either in a tab or in the background for an assembly. Those versions are listed as could not be opened. Close the design and export again with **Skip existing files** to fill them in.
@@ -181,6 +186,13 @@ Project Archiver is built on Fusion's standard Python add-in template and has no
 | `Project-Archiver/lib/fusionAddInUtils/` | Event and logging helpers from the template |
 
 See [Python add-in template](https://help.autodesk.com/view/fusion360/ENU/?guid=GUID-DF32F126-366B-45C0-88B0-CEB46F5A9BE8) in the Fusion API documentation for how the template is organized.
+
+To build the release zip:
+
+    python tools/build_dist.py
+
+It reads the version from `Project-Archiver/Project-Archiver.manifest` and writes
+`dist/Project-Archiver-<version>.zip`, which is git-ignored. Attach that file to a GitHub release; don't commit it.
 
 ## License
 

@@ -15,7 +15,7 @@ import adsk.core
 from ... import config
 from . import exporter
 from .export_options import (DESIGN_EXTENSIONS, DRAWING_EXPORTS, EXISTING_FILES_OPTIONS, EXISTING_FILES_SKIP,
-                             NAME_DOCUMENT, NAME_OPTIONS, ExportOptions)
+                             NAME_DOCUMENT, NAME_OPTIONS, ROOT_FILES_LABEL, ExportOptions)
 from .file_utils import get_home_folder, get_output_folder, sanitize_name
 from .log_utils import LOG_FILE_NAME
 
@@ -35,15 +35,20 @@ PROJECT_ROWS_SHOWN = 10
 # The hub, project and folder the open dialog exports, for the output path preview
 preview_location = {}
 
+# Folder names shown in the folder-selection table, in row order, for the open dialog
+folder_selection_names = []
+
 
 def add_export_inputs(inputs: adsk.core.CommandInputs, location_label: str, location: str, hub_name: str,
-                      project_name: str = None, folder_path=(), projects=None):
+                      project_name: str = None, folder_path=(), projects=None, project_folders=None):
     """Add the export dialog's inputs.
 
     location_label and location describe what will be exported, such as the project name, and are
     shown read-only at the top since they come from the Data Panel. hub_name, project_name and
     folder_path are used to preview where the files go. When exporting a hub, project_name is None
-    and projects is the hub's projects, offered in a dropdown with all of them checked.
+    and projects is the hub's projects, offered in a dropdown with all of them checked. When
+    exporting a whole project, project_folders offers its top-level folders so a subset can be
+    exported.
     """
     preview_location.clear()
     preview_location.update(hub_name=hub_name, project_name=project_name, folder_path=list(folder_path))
@@ -52,6 +57,9 @@ def add_export_inputs(inputs: adsk.core.CommandInputs, location_label: str, loca
 
     if projects is not None:
         add_projects_table(inputs, projects)
+
+    if project_folders:
+        add_folders_table(inputs, project_folders)
 
     # The output folder is a root: files go under <root>/<hub>/<project>/, whichever command exports them
     inputs.addStringValueInput('output_folder', 'Output folder:', get_home_folder(config.USER_DIR_NAME))
@@ -115,6 +123,11 @@ def add_export_inputs(inputs: adsk.core.CommandInputs, location_label: str, loca
     hidden_input.tooltip = ('Show every hidden body and component at every level before exporting, so they\'re '
                             'included. F3D files always include them, hidden as in the design.')
 
+    sketches_input = advanced_inputs.addBoolValueInput('export_sketches', 'Export 2D sketches to DXF?', True, '',
+                                                       False)
+    sketches_input.tooltip = ('Export every sketch in each design to its own DXF file, in addition to the selected '
+                              'design types. Drawings are exported to DXF with the drawing types.')
+
     text_commands_input = advanced_inputs.addBoolValueInput('open_text_commands', 'Open Text Commands?', True, '',
                                                             False)
     text_commands_input.tooltip = ('Open the Text Commands window to see each file as it\'s exported. '
@@ -168,6 +181,68 @@ def update_projects_selected(inputs: adsk.core.CommandInputs):
         len(get_selected_project_rows(inputs)), table.rowCount)
 
 
+def add_folders_table(inputs: adsk.core.CommandInputs, folders):
+    """Add a table to choose which top-level folders of the project to export.
+
+    Row 0 stands for the files that sit directly in the project. Every row is checked to start
+    with, which exports the whole project exactly as before.
+    """
+    global folder_selection_names
+    folder_selection_names = [ROOT_FILES_LABEL] + [folder.name for folder in folders]
+
+    inputs.addTextBoxCommandInput('folders_selected', 'Folders:', '', 1, True)
+
+    group = inputs.addGroupCommandInput('folder_selection', 'Select folders')
+    group.isExpanded = False
+
+    table = group.children.addTableCommandInput('folders', 'Folders', 2, '1:8')
+    table.maximumVisibleRows = PROJECT_ROWS_SHOWN
+    table.tooltip = 'The project folders to export. All of them are checked to start with.'
+    table_inputs = table.commandInputs
+
+    for row, name in enumerate(folder_selection_names):
+        check_box = table_inputs.addBoolValueInput('folder_{}'.format(row), '', True, '', True)
+        label = table_inputs.addTextBoxCommandInput('folder_name_{}'.format(row), '', html.escape(name), 1, True)
+        table.addCommandInput(check_box, row, 0)
+        table.addCommandInput(label, row, 1)
+
+    for button_id, text in (('select_all_folders', 'Select all'), ('select_no_folders', 'Select none')):
+        button = table_inputs.addBoolValueInput(button_id, text, False, '', False)
+        button.text = text
+        table.addToolbarCommandInput(button)
+
+    update_folders_selected(inputs)
+
+
+def get_selected_folder_rows(inputs: adsk.core.CommandInputs):
+    """Return the row numbers of the folders checked in the folders table."""
+    table: adsk.core.TableCommandInput = inputs.itemById('folders')
+    return [row for row in range(table.rowCount) if inputs.itemById('folder_{}'.format(row)).value]
+
+
+def get_selected_folders(inputs: adsk.core.CommandInputs):
+    """Return None when every folder is checked, otherwise the set of checked names.
+
+    None means the whole project, which is also what an export without a folder table uses.
+    """
+    table = inputs.itemById('folders')
+    if table is None:
+        return None
+
+    rows = get_selected_folder_rows(inputs)
+    if len(rows) == table.rowCount:
+        return None
+
+    return {folder_selection_names[row] for row in rows}
+
+
+def update_folders_selected(inputs: adsk.core.CommandInputs):
+    """Show how many folders are checked."""
+    table: adsk.core.TableCommandInput = inputs.itemById('folders')
+    inputs.itemById('folders_selected').text = '{} of {} selected'.format(
+        len(get_selected_folder_rows(inputs)), table.rowCount)
+
+
 def get_export_options(inputs: adsk.core.CommandInputs, data_folder: adsk.core.DataFolder = None) -> ExportOptions:
     """Read the dialog's inputs into ExportOptions."""
     def value(input_id):
@@ -192,6 +267,8 @@ def get_export_options(inputs: adsk.core.CommandInputs, data_folder: adsk.core.D
         skip_used_designs=value('skip_used_designs'),
         include_hidden=value('include_hidden'),
         all_versions=value('all_versions'),
+        export_sketches=value('export_sketches'),
+        selected_folders=get_selected_folders(inputs),
         data_folder=data_folder,
     )
 
@@ -257,6 +334,15 @@ def handle_input_changed(changed_input: adsk.core.CommandInput):
     elif changed_input.id.startswith('project_'):
         update_projects_selected(inputs)
 
+    elif changed_input.id in ('select_all_folders', 'select_no_folders'):
+        table = inputs.itemById('folders')
+        for row in range(table.rowCount):
+            inputs.itemById('folder_{}'.format(row)).value = changed_input.id == 'select_all_folders'
+        update_folders_selected(inputs)
+
+    elif changed_input.id.startswith('folder_') and not changed_input.id.startswith('folder_name_'):
+        update_folders_selected(inputs)
+
 
 def update_output_preview(inputs: adsk.core.CommandInputs):
     """Show the full path the files will go to, below the output folder."""
@@ -278,8 +364,11 @@ def inputs_are_valid(inputs: adsk.core.CommandInputs) -> bool:
     if inputs.itemById('projects') is not None and not get_selected_project_rows(inputs):
         return False
 
+    if inputs.itemById('folders') is not None and not get_selected_folder_rows(inputs):
+        return False
+
     options = get_export_options(inputs)
-    return bool(options.design_types or options.drawing_types
+    return bool(options.design_types or options.drawing_types or options.export_sketches
                 or (exporter.HAS_ELECTRON and options.export_electronics))
 
 
